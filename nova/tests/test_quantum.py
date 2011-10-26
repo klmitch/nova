@@ -15,6 +15,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import stubout
+
 from nova import context
 from nova import db
 from nova.db.sqlalchemy import models
@@ -25,6 +27,7 @@ from nova import log as logging
 from nova.network.quantum import manager as quantum_manager
 from nova import test
 from nova import utils
+from nova.network import manager
 
 LOG = logging.getLogger('nova.tests.quantum_network')
 
@@ -178,17 +181,20 @@ class QuantumTestCaseBase(object):
         self._create_nets()
         self._delete_nets()
 
+    def _create_network(self, n):
+        ctx = context.RequestContext('user1', n['project_id'])
+        self.net_man.create_networks(ctx,
+                                     label=n['label'], cidr=n['cidr'],
+                                     multi_host=n['multi_host'],
+                                     num_networks=1, network_size=256, cidr_v6=n['cidr_v6'],
+                                     gateway_v6=n['gateway_v6'], bridge=None,
+                                     bridge_interface=None, dns1=n['dns1'],
+                                     dns2=n['dns2'], project_id=n['project_id'],
+                                     priority=n['priority'])
+
     def _create_nets(self):
         for n in networks:
-            ctx = context.RequestContext('user1', n['project_id'])
-            self.net_man.create_networks(ctx,
-                    label=n['label'], cidr=n['cidr'],
-                    multi_host=n['multi_host'],
-                    num_networks=1, network_size=256, cidr_v6=n['cidr_v6'],
-                    gateway_v6=n['gateway_v6'], bridge=None,
-                    bridge_interface=None, dns1=n['dns1'],
-                    dns2=n['dns2'], project_id=n['project_id'],
-                    priority=n['priority'])
+            self._create_network(n)
 
     def _delete_nets(self):
         for n in networks:
@@ -289,6 +295,46 @@ class QuantumTestCaseBase(object):
                     project_id=project_id)
 
         self._delete_nets()
+
+    def test_local_mac_address_creation(self):
+        fake_mac = "ab:cd:ef:ab:cd:ef"
+        self.stubs.Set(manager.FlatManager, "generate_mac_address",
+                       lambda x: fake_mac)
+        project_id = "fake_project1"
+        ctx = context.RequestContext('user1', project_id)
+        self._create_network(networks[0])
+
+        net_ids = self.net_man.q_conn.get_networks_for_tenant(project_id)
+        requested_networks = [(net_id, None) for net_id in net_ids]
+
+        instance_ref = db.api.instance_create(ctx,
+                                    {"project_id": project_id})
+        nw_info = self.net_man.allocate_for_instance(ctx,
+                        instance_id=instance_ref['id'], host="",
+                        instance_type_id=instance_ref['instance_type_id'],
+                        project_id=project_id,
+                        requested_networks=requested_networks)
+        self.assertEqual(nw_info[0][1]['mac'], fake_mac)
+
+    def test_melange_mac_address_creation(self):
+        fake_mac = "fe:dc:ba:ab:cd:ef"
+        self.stubs.Set(xxx, "xxx", lambda x: fake_mac)
+        project_id = "fake_project1"
+        ctx = context.RequestContext('user1', project_id)
+        self._create_network(networks[0])
+
+        net_ids = self.net_man.q_conn.get_networks_for_tenant(project_id)
+        requested_networks = [(net_id, None) for net_id in net_ids]
+
+        instance_ref = db.api.instance_create(ctx,
+                                    {"project_id": project_id})
+        nw_info = self.net_man.allocate_for_instance(ctx,
+                        instance_id=instance_ref['id'], host="",
+                        instance_type_id=instance_ref['instance_type_id'],
+                        project_id=project_id,
+                        requested_networks=requested_networks)
+        self.assertEqual(nw_info[0][1]['mac'], fake_mac)
+
 
     def test_validate_bad_network(self):
         ctx = context.RequestContext('user1', 'fake_project1')
