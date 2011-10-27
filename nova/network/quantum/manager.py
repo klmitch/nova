@@ -32,6 +32,12 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('quantum_ipam_lib',
                     'nova.network.quantum.nova_ipam_lib',
                     "Indicates underlying IP address management library")
+# TODO(Vek): Eventually, this needs to mean more than just using
+#            Melange for assignment of MAC addresses (with an
+#            appropriate flag name change, of course), but this is all
+#            it does right now
+flags.DEFINE_bool('use_melange_mac_generation', False,
+                  "Use Melange for assignment of MAC addresses")
 
 
 class QuantumManager(manager.FlatManager):
@@ -182,6 +188,16 @@ class QuantumManager(manager.FlatManager):
                                          instance_type_id, host)
 
     def add_virtual_interface(self, context, instance_id, network_id):
+        # If we're not using melange, use the default means...
+        if FLAGS.use_melange_mac_generation:
+            return self._add_virtual_interface(context, instance_id,
+                                               network_id)
+
+        return super(QuantumManager, self).add_virtual_interface(context,
+                                                                 instance_id,
+                                                                 network_id)
+
+    def _add_virtual_interface(self, context, instance_id, network_id):
         vif = {'instance_id': instance_id,
                'network_id': network_id,
                'uuid': str(utils.gen_uuid())}
