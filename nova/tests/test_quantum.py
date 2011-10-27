@@ -25,6 +25,7 @@ from nova import exception
 from nova import ipv6
 from nova import log as logging
 from nova.network.quantum import manager as quantum_manager
+from nova.network.quantum import melange_connection
 from nova import test
 from nova import utils
 from nova.network import manager
@@ -317,8 +318,9 @@ class QuantumTestCaseBase(object):
         self.assertEqual(nw_info[0][1]['mac'], fake_mac)
 
     def test_melange_mac_address_creation(self):
-        fake_mac = "fe:dc:ba:ab:cd:ef"
-        self.stubs.Set(xxx, "xxx", lambda x: fake_mac)
+        fake_mac = "ab:cd:ef:ab:cd:ef"
+        self.stubs.Set(melange_connection.MelangeConnection, "create_vif",
+                       lambda w, x, y, z: fake_mac)
         project_id = "fake_project1"
         ctx = context.RequestContext('user1', project_id)
         self._create_network(networks[0])

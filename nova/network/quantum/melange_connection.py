@@ -140,7 +140,7 @@ class MelangeConnection(object):
 
         self.delete(url, headers=json_content_type)
 
-    def create_vif(self, vif_id, tenant_id, instance_id):
+    def create_vif(self, vif_id, instance_id, project_id=None):
         tenant_scope = "/tenants/%s" % project_id if project_id else ""
 
         url = "ipam%(tenant_scope)s/interfaces" % locals()
