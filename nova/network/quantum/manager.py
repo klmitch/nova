@@ -22,6 +22,7 @@ from nova import log as logging
 from nova import manager
 from nova.network import manager
 from nova.network.quantum import quantum_connection
+from nova.network.quantum import melange_ipam_lib
 from nova import utils
 
 LOG = logging.getLogger("nova.network.quantum.manager")
@@ -166,8 +167,9 @@ class QuantumManager(manager.FlatManager):
             network_ref = db.network_get_by_uuid(admin_context,
                                                  quantum_net_id)
 
-            vif_rec = manager.FlatManager.add_virtual_interface(self,
-                                  context, instance_id, network_ref['id'])
+            vif_rec = self.add_virtual_interface(context,
+                                                 instance_id,
+                                                 network_ref['id'])
 
             # talk to Quantum API to create and attach port.
             q_tenant_id = project_id or FLAGS.quantum_default_tenant_id
@@ -178,6 +180,19 @@ class QuantumManager(manager.FlatManager):
 
         return self.get_instance_nw_info(context, instance_id,
                                          instance_type_id, host)
+
+    def add_virtual_interface(self, context, instance_id, network_id):
+        vif = {'instance_id': instance_id,
+               'network_id': network_id,
+               'uuid': str(utils.gen_uuid())}
+
+        # branching for melange vs. local
+        m_ipam = melange_ipam_lib.get_ipam_lib(self)
+        vif['address'] = m_ipam.create_vif(vif['uuid'],
+                                           vif['instance_id'],
+                                           context.project_id)
+
+        return self.db.virtual_interface_create(context, vif)
 
     def get_instance_nw_info(self, context, instance_id,
                                 instance_type_id, host):

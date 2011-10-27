@@ -203,3 +203,9 @@ class QuantumMelangeIPAMLib(object):
         """
         tenant_id = project_id or FLAGS.quantum_default_tenant_id
         self.m_conn.deallocate_ips(net_id, vif_ref['uuid'], tenant_id)
+
+    def create_vif(self, vif_id, instance_id, project_id=None):
+        """Create a new vif with the specified information.
+        """
+        tenant_id = project_id or FLAGS.quantum_default_tenant_id
+        return self.m_conn.create_vif(vif_id, instance_id, tenant_id)
