@@ -141,14 +141,12 @@ class MelangeConnection(object):
         self.delete(url, headers=json_content_type)
 
     def create_vif(self, vif_id, instance_id, project_id=None):
-        tenant_scope = "/tenants/%s" % project_id if project_id else ""
+        url = "ipam/interfaces"
 
-        url = "ipam%(tenant_scope)s/interfaces" % locals()
+        request_body = dict(interface=dict(id=vif_id, tenant_id=project_id,
+                                           device_id=instance_id))
 
-        request_body = dict(interface=dict(id=vif_id, tenant_id=tenant_id,
-                                           device_id=interface_id))
-
-        response = self.post(url, body=json.dumps(req_params),
+        response = self.post(url, body=json.dumps(request_body),
                              headers=json_content_type)
 
         return json.loads(response)['interface']['mac_address']
