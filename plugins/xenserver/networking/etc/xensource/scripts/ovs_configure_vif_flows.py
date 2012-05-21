@@ -37,6 +37,9 @@ class OvsFlow(object):
         self.bridge = bridge
         self.params = params
 
+    def set_param(self, key, value):
+        self.params[key] = value
+
     def add(self, rule):
         novalib.execute(OVS_OFCTL, 'add-flow', self.bridge, rule % self.params)
 
@@ -91,45 +94,45 @@ def main(command, vif_raw, net_type):
             if command == 'online':
                 if net_type in ('ipv4', 'all') and 'ips' in data:
                     for ip4 in data['ips']:
-                        ovs.params.update({'IPV4_ADDR': ip4['ip']})
-                        apply_ovs_ipv4_flows(ovs, bridge, params)
+                        ovs.set_param('IPV4_ADDR', ip4['ip'])
+                        apply_ovs_ipv4_flows(ovs)
                 if net_type in ('ipv6', 'all') and 'ip6s' in data:
                     for ip6 in data['ip6s']:
                         link_local = str(netaddr.EUI(data['mac']).eui64()\
                                         .ipv6_link_local())
-                        ovs.params.update({'IPV6_LINK_LOCAL_ADDR': link_local})
-                        ovs.params.update({'IPV6_GLOBAL_ADDR': ip6['ip']})
-                        apply_ovs_ipv6_flows(ovs, bridge, params)
+                        ovs.set_param('IPV6_LINK_LOCAL_ADDR', link_local)
+                        ovs.set_param('IPV6_GLOBAL_ADDR', ip6['ip'])
+                        apply_ovs_ipv6_flows(ovs)
 
 
-def apply_ovs_ipv4_flows(ovs, bridge, params):
-    # When ARP traffic arrives from a vif, push it to virtual port
-    # 9999 for further processing
+def apply_ovs_ipv4_flows(ovs):
+    # Drop IP bcast/mcast -- matching the multicast bit in the dst mac
+    # catches both traffic types
+    ovs.add("priority=6,ip,in_port=%(OF_PORT)s,"
+            "dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,actions=drop")
+
+    # When valid ARP traffic arrives from a vif, push it to virtual
+    # port 9999 for further processing
     ovs.add("priority=4,arp,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
             "nw_src=%(IPV4_ADDR)s,arp_sha=%(MAC)s,actions=resubmit:9999")
     ovs.add("priority=4,arp,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
             "nw_src=0.0.0.0,arp_sha=%(MAC)s,actions=resubmit:9999")
 
-    # When IP traffic arrives from a vif, push it to virtual port 9999
-    # for further processing
+    # When valid IP traffic arrives from a vif, push it to virtual
+    # port 9999 for further processing
     ovs.add("priority=4,ip,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
             "nw_src=%(IPV4_ADDR)s,actions=resubmit:9999")
 
-    # Drop IP bcast/mcast
-    ovs.add("priority=6,ip,in_port=%(OF_PORT)s,dl_dst=ff:ff:ff:ff:ff:ff,"
-            "actions=drop")
-    ovs.add("priority=5,ip,in_port=%(OF_PORT)s,nw_dst=224.0.0.0/4,"
-            "actions=drop")
-    ovs.add("priority=5,ip,in_port=%(OF_PORT)s,nw_dst=240.0.0.0/4,"
-            "actions=drop")
-
     # Pass ARP requests coming from any VMs on the local HV (port
     # 9999) or coming from external sources (PHYS_PORT) to the VM and
-    # physical NIC.  We output this to the physical NIC as well, since
-    # with instances of shared ip groups, the active host for the
+    # physical NIC if destination is local.  For ARP requests from
+    # local VIFS, we send them to the physical NIC as well, since with
+    # instances of shared ip groups, the active host for the
     # destination IP might be elsewhere...
     ovs.add("priority=3,arp,in_port=9999,nw_dst=%(IPV4_ADDR)s,"
             "actions=output:%(OF_PORT)s,output:%(PHYS_PORT)s")
+    ovs.add("priority=3,arp,in_port=%(PHYS_PORT)s,nw_dst=%(IPV4_ADDR)s,"
+            "actions=output:%(OF_PORT)s")
 
     # Pass ARP traffic originating from external sources the VM with
     # the matching IP address
@@ -164,66 +167,110 @@ def apply_ovs_ipv4_flows(ovs, bridge, params):
     ovs.add("priority=2,in_port=9999,actions=output:%(PHYS_PORT)s")
 
 
-def apply_ovs_ipv6_flows(ovs, bridge, params):
-    # allow valid IPv6 ND outbound (are both global and local IPs needed?)
-    # Neighbor Solicitation
+def apply_ovs_ipv6_flows(ovs):
+    # Drop flows for which the next header could not be determined
+    ovs.add("priority=6,ipv6,nw_proto=59,actions=drop")
+
+    # Drop ICMPv6 packets whose type is not present
+    ovs.add("priority=6,icmp6,icmp_type=0,actions=drop")
+
+    # Drop fragmented neighbor solicitation/advertisement to make sure
+    # nothing slips by
+    ovs.add("priority=6,icmp6,icmp_type=135,ip_frag=yes,actions=drop")
+    ovs.add("priority=6,icmp6,icmp_type=136,ip_frag=yes,actions=drop")
+
+    # Push neighbor solicitation/advertisement from approved mac/ip to
+    # port 9999 for further processing.  Match on hop limit (TTL) of
+    # 255 to make sure the packet is local.  Neighbor Solicitation
     ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,icmp_type=135,nd_sll=%(MAC)s,"
-            "actions=normal")
+            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,nw_ttl=255,icmp_type=135,"
+            "nd_sll=%(MAC)s,actions=resubmit:9999")
     ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,icmp_type=135,actions=normal")
+            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,nw_ttl=255,icmp_type=135,"
+            "nd_sll=%(MAC)s,actions=resubmit:9999")
     ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,icmp_type=135,nd_sll=%(MAC)s,"
-            "actions=normal")
-    ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,icmp_type=135,actions=normal")
+            "ipv6_src=::,nw_ttl=255,icmp_type=135,nd_sll=0:0:0:0:0:0,"
+            "actions=resubmit:9999")
 
     # Neighbor Advertisement
     ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,icmp_type=136,"
-            "nd_target=%(IPV6_LINK_LOCAL_ADDR)s,actions=normal")
+            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,nw_ttl=255,icmp_type=136,"
+            "nd_target=%(IPV6_LINK_LOCAL_ADDR)s,actions=resubmit:9999")
     ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,icmp_type=136,actions=normal")
-    ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,icmp_type=136,"
-            "nd_target=%(IPV6_GLOBAL_ADDR)s,actions=normal")
-    ovs.add("priority=6,in_port=%(OF_PORT)s,dl_src=%(MAC)s,icmp6,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,icmp_type=136,actions=normal")
+            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,nw_ttl=255,icmp_type=136,"
+            "nd_target=%(IPV6_GLOBAL_ADDR)s,actions=resubmit:9999")
 
-    # drop all other neighbor discovery (req b/c we permit all icmp6 below)
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=135,actions=drop")
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=136,actions=drop")
-
-    # do not allow sending specifc ICMPv6 types
+    # Drop specific ICMPv6 types
+    # Neighbor Solicitation from non-approved mac/ip
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=135,action=drop")
+    # Neighbor Advertisement from non-approved mac/ip
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=136,action=drop")
     # Router Advertisement
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=134,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=134,action=drop")
     # Redirect Gateway
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=137,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=137,action=drop")
     # Mobile Prefix Solicitation
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=146,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=146,action=drop")
     # Mobile Prefix Advertisement
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=147,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=147,action=drop")
     # Multicast Router Advertisement
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=151,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=151,action=drop")
     # Multicast Router Solicitation
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=152,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=152,action=drop")
     # Multicast Router Termination
-    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=153,actions=drop")
+    ovs.add("priority=5,in_port=%(OF_PORT)s,icmp6,icmp_type=153,action=drop")
 
-    # allow valid IPv6 outbound, by type
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,icmp6,actions=normal")
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,icmp6,actions=normal")
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,tcp6,actions=normal")
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,tcp6,actions=normal")
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,udp6,actions=normal")
-    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,"
-            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,udp6,actions=normal")
-    # all else will be dropped ...
+    # Push valid traffic to port 9999 for further processing
+    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,ipv6,"
+            "ipv6_src=%(IPV6_GLOBAL_ADDR)s,actions=resubmit:9999")
+    ovs.add("priority=4,in_port=%(OF_PORT)s,dl_src=%(MAC)s,ipv6,"
+            "ipv6_src=%(IPV6_LINK_LOCAL_ADDR)s,actions=resubmit:9999")
+
+    # Pass neighbor solicitation/advertisement requests originating
+    # from any VMs on the local HV (port 9999) or coming from external
+    # sources (PHYS_PORT) to the VM and physical NIC.  We output this
+    # to the physical NIC as well, since with instances of shared ip
+    # groups, the active host for the destination IP might be
+    # elsewhere
+    ovs.add("priority=3,in_port=9999,icmp6,nw_ttl=255,icmp_type=135,"
+            "nd_target=%(IPV6_LINK_LOCAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+    ovs.add("priority=3,in_port=9999,icmp6,nw_ttl=255,icmp_type=135,"
+            "nd_target=%(IPV6_GLOBAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+    ovs.add("priority=3,in_port=9999,icmp6,nw_ttl=255,icmp_type=136,"
+            "nd_target=%(IPV6_LINK_LOCAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+    ovs.add("priority=3,in_port=9999,icmp6,nw_ttl=255,icmp_type=136,"
+            "nd_target=%(IPV6_GLOBAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+
+    # Pass neighbor solicitation requests originating from external
+    # sources to the VM with the matching IP address
+    ovs.add("priority=3,in_port=%(PHYS_PORT)s,icmp6,nw_ttl=255,"
+            "icmp_type=135,nd_target=%(IPV6_LINK_LOCAL_ADDR)s,"
+            "actions=output:%(OF_PORT)s")
+    ovs.add("priority=3,in_port=%(PHYS_PORT)s,icmp6,nw_ttl=255,"
+            "icmp_type=135,nd_target=%(IPV6_GLOBAL_ADDR)s,"
+            "actions=output:%(OF_PORT)s")
+
+    # ALL IPv6 traffic: Pass IP data coming from any VMs on the local
+    # HV (port 9999) or coming from external sources (PHYS_PORT) to
+    # the VM and physical NIC We output this to the physical NIC as
+    # well, since with instances of shared ip groups, the active host
+    # for the destination IP might be elsewhere
+    ovs.add("priority=3,in_port=9999,dl_dst=%(MAC)s,ipv6,"
+            "ipv6_dst=%(IPV6_LINK_LOCAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+    ovs.add("priority=3,in_port=9999,dl_dst=%(MAC)s,ipv6,"
+            "ipv6_dst=%(IPV6_GLOBAL_ADDR)s,actions=output:%(OF_PORT)s,"
+            "output:%(PHYS_PORT)s")
+
+    # Pass IPv6 traffic from the external environment to the VM
+    ovs.add("priority=3,in_port=%(PHYS_PORT)s,dl_dst=%(MAC)s,ipv6,"
+            "ipv6_dst=%(IPV6_LINK_LOCAL_ADDR)s,actions=output:%(OF_PORT)s")
+    ovs.add("priority=3,in_port=%(PHYS_PORT)s,dl_dst=%(MAC)s,ipv6,"
+            "ipv6_dst=%(IPV6_GLOBAL_ADDR)s,actions=output:%(OF_PORT)s")
 
 
 if __name__ == "__main__":
