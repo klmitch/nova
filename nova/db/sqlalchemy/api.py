@@ -491,6 +491,28 @@ def compute_node_get_all(context, session=None):
                     all()
 
 
+@require_admin_context
+def compute_node_get_by_hypervisor(context, hypervisor_hostname):
+    result = model_query(context, models.ComputeNode).\
+                    options(joinedload('service')).\
+                    filter_by(hypervisor_hostname=hypervisor_hostname).\
+                    first()
+
+    if not result:
+        raise exception.ComputeHostNotFound(host=hypervisor_hostname)
+
+    return result
+
+
+@require_admin_context
+def compute_node_search_by_hypervisor(context, hypervisor_re):
+    field = models.ComputeNode.hypervisor_hostname
+    return model_query(context, models.ComputeNode).\
+                    options(joinedload('service')).\
+                    filter(field.like('%%%s%%' % hypervisor_re)).\
+                    all()
+
+
 def _get_host_utilization(context, host, ram_mb, disk_gb):
     """Compute the current utilization of a given host."""
     instances = instance_get_all_by_host(context, host)

@@ -193,6 +193,16 @@ def compute_node_get_all(context):
     return IMPL.compute_node_get_all(context)
 
 
+def compute_node_get_by_hypervisor(context, hypervisor_hostname):
+    """Get computeNodes given a hypervisor's hostname."""
+    return IMPL.compute_node_get_by_hypervisor(context, hypervisor_hostname)
+
+
+def compute_node_search_by_hypervisor(context, hypervisor_re):
+    """Get computeNodes given a hypervisor hostname regular expression."""
+    return IMPL.compute_node_search_by_hypervisor(context, hypervisor_re)
+
+
 def compute_node_create(context, values):
     """Create a computeNode from the values dictionary."""
     return IMPL.compute_node_create(context, values)
