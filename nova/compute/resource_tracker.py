@@ -23,6 +23,7 @@ from oslo.config import cfg
 
 from nova.compute import claims
 from nova.compute import flavors
+import nova.compute.ghost
 from nova.compute import task_states
 from nova.compute import vm_states
 from nova import conductor
@@ -65,6 +66,7 @@ class ResourceTracker(object):
         self.tracked_instances = {}
         self.tracked_migrations = {}
         self.conductor_api = conductor.API()
+        self.ghost_set = nova.compute.ghost.GhostSet()
 
     @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)
     def instance_claim(self, context, instance_ref, limits=None):
@@ -227,6 +229,18 @@ class ResourceTracker(object):
                 self._update(ctxt, self.compute_node)
 
     @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)
+    def add_ghost(self, ghost):
+        """
+        Add an instance ghost to be tracked.
+        """
+
+        # Track the ghost
+        self.ghost_set.add(ghost)
+
+        # Update the resource usage counts
+        self._update_usage(self.compute_node, ghost.resources)
+
+    @utils.synchronized(COMPUTE_RESOURCE_SEMAPHORE)
     def update_usage(self, context, instance):
         """Update the resource usage and stats after a change in an
         instance
@@ -287,6 +301,9 @@ class ResourceTracker(object):
         # hypervisor, but are not in the DB:
         orphans = self._find_orphaned_instances()
         self._update_usage_from_orphans(resources, orphans)
+
+        # Account for extant ghosts
+        self._update_usage(resources, self.ghost_set.resources)
 
         self._report_final_resource_view(resources)
 
@@ -377,8 +394,9 @@ class ResourceTracker(object):
     def _update_usage(self, resources, usage, sign=1):
         mem_usage = usage['memory_mb']
 
-        overhead = self.driver.estimate_instance_overhead(usage)
-        mem_usage += overhead['memory_mb']
+        if mem_usage:
+            overhead = self.driver.estimate_instance_overhead(usage)
+            mem_usage += overhead['memory_mb']
 
         resources['memory_mb_used'] += sign * mem_usage
         resources['local_gb_used'] += sign * usage.get('root_gb', 0)

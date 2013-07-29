@@ -408,6 +408,12 @@ class ComputeManager(manager.SchedulerDependentManager):
             self._resource_tracker_dict[nodename] = rt
         return rt
 
+    def _ghost_update(self, instance_ref, ghost):
+        if (ghost and instance_ref['host'] == self.host and
+                instance_ref['node'] in self.driver.get_available_nodes()):
+            rt = self._get_resource_tracker(instance_ref['node'])
+            rt.add_ghost(ghost)
+
     def _instance_update(self, context, instance_uuid, **kwargs):
         """Update an instance in the database using kwargs as value."""
 
@@ -507,9 +513,10 @@ class ComputeManager(manager.SchedulerDependentManager):
                              instance=instance)
                     # always destroy disks if the instance was deleted
                     destroy_disks = True
-                self.driver.destroy(instance,
-                                    self._legacy_nw_info(network_info),
-                                    bdi, destroy_disks)
+                ghost = self.driver.destroy(instance,
+                                            self._legacy_nw_info(network_info),
+                                            bdi, destroy_disks)
+                self._ghost_update(instance, ghost)
 
     def _is_instance_storage_shared(self, context, instance):
         shared_storage = True
@@ -1497,8 +1504,9 @@ class ComputeManager(manager.SchedulerDependentManager):
         # NOTE(melwitt): attempt driver destroy before releasing ip, may
         #                want to keep ip allocated for certain failures
         try:
-            self.driver.destroy(instance, self._legacy_nw_info(network_info),
-                                block_device_info)
+            ghost = self.driver.destroy(instance,
+                                        self._legacy_nw_info(network_info),
+                                        block_device_info)
         except exception.InstancePowerOffFailure:
             # if the instance can't power off, don't release the ip
             with excutils.save_and_reraise_exception():
@@ -1509,6 +1517,9 @@ class ComputeManager(manager.SchedulerDependentManager):
                 # volume api calls, preserving current behavior
                 self._try_deallocate_network(context, instance,
                                              requested_networks)
+        else:
+            # Update the set of ghosts
+            self._ghost_update(instance, ghost)
 
         self._try_deallocate_network(context, instance, requested_networks)
 
@@ -1881,9 +1892,10 @@ class ComputeManager(manager.SchedulerDependentManager):
             if not recreate:
                 block_device_info = self._get_volume_block_device_info(
                         self._get_volume_bdms(bdms))
-                self.driver.destroy(instance,
+                ghost = self.driver.destroy(instance,
                                     self._legacy_nw_info(network_info),
                                     block_device_info=block_device_info)
+                self._ghost_update(instance, ghost)
 
             instance = self._instance_update(
                     context, instance['uuid'],
@@ -2509,8 +2521,10 @@ class ComputeManager(manager.SchedulerDependentManager):
             block_device_info = self._get_instance_volume_block_device_info(
                                 context, instance)
 
-            self.driver.destroy(instance, self._legacy_nw_info(network_info),
-                                block_device_info)
+            ghost = self.driver.destroy(instance,
+                                        self._legacy_nw_info(network_info),
+                                        block_device_info)
+            self._ghost_update(instance, ghost)
 
             self._terminate_volume_connections(context, instance)
 
@@ -3166,8 +3180,10 @@ class ComputeManager(manager.SchedulerDependentManager):
         network_info = self._get_instance_nw_info(context, instance)
         block_device_info = self._get_instance_volume_block_device_info(
                 context, instance)
-        self.driver.destroy(instance, self._legacy_nw_info(network_info),
-                block_device_info)
+        ghost = self.driver.destroy(instance,
+                                    self._legacy_nw_info(network_info),
+                                    block_device_info)
+        self._ghost_update(instance, ghost)
 
         instance.power_state = current_power_state
         instance.host = None
@@ -3893,8 +3909,9 @@ class ComputeManager(manager.SchedulerDependentManager):
         if migrate_data:
             is_shared_storage = migrate_data.get('is_shared_storage', True)
         if block_migration or not is_shared_storage:
-            self.driver.destroy(instance_ref,
-                                self._legacy_nw_info(network_info))
+            ghost = self.driver.destroy(instance_ref,
+                                        self._legacy_nw_info(network_info))
+            self._ghost_update(instance_ref, ghost)
         else:
             # self.driver.destroy() usually performs  vif unplugging
             # but we must do it explicitly here when block_migration
@@ -4042,8 +4059,10 @@ class ComputeManager(manager.SchedulerDependentManager):
         #             from remote volumes if necessary
         block_device_info = self._get_instance_volume_block_device_info(
                             context, instance)
-        self.driver.destroy(instance, self._legacy_nw_info(network_info),
-                            block_device_info)
+        ghost = self.driver.destroy(instance,
+                                    self._legacy_nw_info(network_info),
+                                    block_device_info)
+        self._ghost_update(instance, ghost)
         self._notify_about_instance_usage(
                         context, instance, "live_migration.rollback.dest.end",
                         network_info=network_info)

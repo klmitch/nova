@@ -257,6 +257,9 @@ class ComputeDriver(object):
                                   be detached from the instance.
         :param destroy_disks: Indicates if disks should be destroyed
 
+        :returns: Either None, or an instance of the
+                  nova.compute.ghost.Ghost class to hold some of the
+                  instance's resources until a later time.
         """
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
