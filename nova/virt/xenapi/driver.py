@@ -225,8 +225,8 @@ class XenAPIDriver(driver.ComputeDriver):
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True):
         """Destroy VM instance."""
-        self._vmops.destroy(instance, network_info, block_device_info,
-                            destroy_disks)
+        return self._vmops.destroy(instance, network_info, block_device_info,
+                                   destroy_disks)
 
     def pause(self, instance):
         """Pause VM instance."""

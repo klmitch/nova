@@ -2343,6 +2343,18 @@
 # value)
 #xenapi_image_upload_handler=nova.virt.xenapi.imageupload.glance.GlanceStore
 
+# Base number of seconds to wait for instance memory to be
+# freed.  Total ghost expiration time is this plus the amount
+# of memory in megabytes times xenapi_ghost_multiplier.
+# (floating point value)
+#xenapi_ghost_constant=0.5
+
+# Multiplier for ghost expiration time.  Total ghost
+# expiration time is xenapi_ghost_constant plus this value
+# times the amount of memory in megabytes. (floating point
+# value)
+#xenapi_ghost_multiplier=0.001
+
 
 #
 # Options defined in nova.vnc

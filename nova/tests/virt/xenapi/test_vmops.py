@@ -16,6 +16,7 @@
 #    under the License.
 
 
+from nova.compute import ghost
 from nova.compute import task_states
 from nova.compute import vm_mode
 from nova import exception
@@ -195,6 +196,29 @@ class VMOpsTestCase(test.TestCase):
         self.assertTrue(self._vmops._is_xsm_sr_check_relaxed())
 
         self.assertEqual(self.make_plugin_call_count, 1)
+
+    def test_destroy_returns_ghost(self):
+        self.flags(xenapi_ghost_constant=1.0,
+                   xenapi_ghost_multiplier=1.0)
+        instance = {'memory_mb': 1024}
+
+        # Stub out all the routines we don't care about
+        self.stubs.Set(vm_utils, 'hard_shutdown_vm', lambda a, b, c: None)
+        self.stubs.Set(self._vmops._volumeops, 'detach_all', lambda a: None)
+        self.stubs.Set(self._vmops, '_destroy_vdis', lambda a, b: None)
+        self.stubs.Set(self._vmops, '_destroy_kernel_ramdisk',
+                       lambda a, b: None)
+        self.stubs.Set(vm_utils, 'destroy_vm', lambda a, b, c: None)
+        self.stubs.Set(self._vmops, 'unplug_vifs', lambda a, b: None)
+        self.stubs.Set(self._vmops.firewall_driver, 'unfilter_instance',
+                       lambda a, **kw: None)
+
+        self.mox.StubOutWithMock(ghost, 'Ghost')
+        ghost.Ghost(1025.0, memory_mb=1024).AndReturn('ghost')
+        self.mox.ReplayAll()
+
+        result = self._vmops._destroy(instance, {'uuid': 'fake_vm'})
+        self.assertEqual(result, 'ghost')
 
 
 class InjectAutoDiskConfigTestCase(VMOpsTestBase):

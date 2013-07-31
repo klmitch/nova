@@ -31,6 +31,7 @@ from oslo.config import cfg
 
 from nova import block_device
 from nova.compute import flavors
+from nova.compute import ghost
 from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_mode
@@ -68,6 +69,17 @@ xenapi_vmops_opts = [
     cfg.StrOpt('xenapi_image_upload_handler',
                 default='nova.virt.xenapi.imageupload.glance.GlanceStore',
                 help='Object Store Driver used to handle image uploads.'),
+    cfg.FloatOpt('xenapi_ghost_constant',
+                 default=0.5,
+                 help='Base number of seconds to wait for instance memory '
+                 'to be freed.  Total ghost expiration time is this plus '
+                 'the amount of memory in megabytes times '
+                 'xenapi_ghost_multiplier.'),
+    cfg.FloatOpt('xenapi_ghost_multiplier',
+                 default=0.001,
+                 help='Multiplier for ghost expiration time.  Total ghost '
+                 'expiration time is xenapi_ghost_constant plus this value '
+                 'times the amount of memory in megabytes.'),
     ]
 
 CONF = cfg.CONF
@@ -1270,6 +1282,12 @@ class VMOps(object):
         self.unplug_vifs(instance, network_info)
         self.firewall_driver.unfilter_instance(
                 instance, network_info=network_info)
+
+        # Set up a ghost, if necessary
+        if instance['memory_mb']:
+            expire = (CONF.xenapi_ghost_constant +
+                      CONF.xenapi_ghost_multiplier * instance['memory_mb'])
+            return ghost.Ghost(expire, memory_mb=instance['memory_mb'])
 
     def pause(self, instance):
         """Pause VM instance."""
